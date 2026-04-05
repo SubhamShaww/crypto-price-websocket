@@ -1,33 +1,84 @@
-# Crypto Price WebSocket Server
+# Crypto Price WebSocket Server (Node.js with Message Queue & Broadcast Channels)
 
-A Node.js application that connects to Binance's public WebSocket API to listen to live crypto prices for BTC/USDT, ETH/USDT, and BNB/USDT, and broadcasts these prices to connected clients via its own WebSocket server. Also provides a REST API for querying prices.
+A Node.js application that connects to Binance's public WebSocket API to listen to live crypto prices for BTC/USDT, ETH/USDT, and BNB/USDT, and broadcasts these prices to connected clients via its own WebSocket server. Features advanced message management using a custom MessageQueue (equivalent to asyncio.Queue) and BroadcastChannel system for efficient real-time communication.
 
 ## Features
 
+- **MessageQueue System**: Custom async message queue (equivalent to Python's asyncio.Queue) for handling Binance messages
+- **BroadcastChannel System**: Pub/sub pattern for efficient broadcasting to all connected WebSocket clients
 - **Multi-Pair Support**: Tracks BTC/USDT, ETH/USDT, and BNB/USDT in real-time
 - **Binance Listener**: Connects to `wss://stream.binance.com:9443/ws/btcusdt@ticker/ethusdt@ticker/bnbusdt@ticker`
 - **Data Extraction**: Extracts symbol, last price, 24h change percentage, and timestamp from Binance updates
-- **Local WebSocket Server**: Runs on `ws://localhost:8000`, allowing multiple clients to connect and receive live price updates
+- **WebSocket Server**: Runs on `ws://localhost:8000`, allowing multiple clients to connect and receive live price updates
 - **REST API**: HTTP endpoints for querying latest prices
-- **Rate Limiting**: API requests are rate-limited to 100 requests per minute
+- **Rate Limiting**: API requests are rate-limited to 100 requests per minute per IP
 - **Connection Limits**: Maximum 100 concurrent WebSocket connections to prevent server overload
 - **Real-time Broadcasting**: Continuously broadcasts the latest price data to all connected clients
 - **Graceful Handling**: Manages client disconnections and connection limits automatically
+- **Docker Containerization**: Fully containerized with Docker and docker-compose
 
 ## Installation
+
+### Local Development
 
 1. Ensure you have Node.js installed (version 14 or higher recommended)
 2. Clone or download this project
 3. Run `npm install` to install dependencies
 
+### Docker Deployment
+
+1. Ensure you have Docker and Docker Compose installed
+2. Clone or download this project
+3. Run `docker-compose up -d` to start the containerized application
+
 ## Usage
 
+### Local Development
+
 1. Start the server:
-   ```
+   ```bash
    npm start
    ```
-2. The WebSocket server will start listening on `ws://localhost:8000`
-3. The REST API will be available on `http://localhost:3000`
+2. For development with auto-restart:
+   ```bash
+   npm run dev
+   ```
+3. Test the functionality:
+   ```bash
+   npm test
+   ```
+
+### Docker
+
+1. Build and start the containers:
+   ```bash
+   docker-compose up --build
+   ```
+2. Or run in background:
+   ```bash
+   docker-compose up -d --build
+   ```
+3. View logs:
+   ```bash
+   docker-compose logs -f
+   ```
+4. Stop the containers:
+   ```bash
+   docker-compose down
+   ```
+
+## Testing
+
+Run the included test script to verify both WebSocket and REST API functionality:
+
+```bash
+npm test
+```
+
+This will:
+- Connect to the WebSocket server and display received price updates
+- Test all REST API endpoints
+- Verify error handling for invalid requests
 
 ## API Endpoints
 
@@ -55,7 +106,7 @@ A Node.js application that connects to Binance's public WebSocket API to listen 
   }
   ```
 
-- **GET /price/:symbol** - Get price for a specific symbol
+- **GET /price/{symbol}** - Get price for a specific symbol
   ```
   curl http://localhost:3000/price/btcusdt
   curl http://localhost:3000/price/ethusdt
@@ -71,7 +122,8 @@ A Node.js application that connects to Binance's public WebSocket API to listen 
   {
     "status": "ok",
     "connectedClients": 5,
-    "trackedSymbols": ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
+    "trackedSymbols": ["BTCUSDT", "ETHUSDT", "BNBUSDT"],
+    "messageQueueSize": 0
   }
   ```
 
@@ -82,9 +134,17 @@ Connect a WebSocket client to receive real-time price updates:
 ```javascript
 const ws = new WebSocket('ws://localhost:8000');
 
+ws.onopen = () => {
+  console.log('Connected to price server');
+};
+
 ws.onmessage = (event) => {
   const priceData = JSON.parse(event.data);
   console.log('Updated prices:', priceData);
+};
+
+ws.onclose = () => {
+  console.log('Disconnected from price server');
 };
 ```
 
@@ -126,14 +186,43 @@ const MAX_CONNECTIONS = 100;      // Max concurrent WS connections
 // Rate limiting: 100 requests per minute
 ```
 
+## Docker Configuration
+
+### Dockerfile Features
+
+- **Multi-stage build**: Optimized for production
+- **Security**: Non-root user execution
+- **Health checks**: Built-in health monitoring
+- **Alpine Linux**: Lightweight base image
+
+## Docker Configuration
+
+### Dockerfile Features
+
+- **Multi-stage build**: Optimized for production
+- **Security**: Non-root user execution
+- **Health checks**: Built-in health monitoring
+- **Alpine Linux**: Lightweight base image
+
+### Docker Compose
+
+- **Port mapping**: REST API (3000) and WebSocket (8000)
+- **Health checks**: Automatic container health monitoring
+- **Restart policy**: Automatic restart on failure
+- **Network isolation**: Dedicated Docker network
+
+### Environment Variables
+
+- `NODE_ENV`: Set to `production` in Docker environment
+
 ## Flow
 
-1. The application connects to Binance's WebSocket for BTC, ETH, and BNB
-2. Upon receiving price updates, it parses and stores the latest data
-3. The local WebSocket server broadcasts updates to all connected clients
-4. Clients can also query prices via the REST API
-5. Connection limits prevent server overload
-6. Rate limiting protects the REST API
+1. **Startup**: Application initializes MessageQueue and BroadcastChannel systems
+2. **Binance Connection**: Consumer puts incoming messages into async queue
+3. **Message Processing**: Processor consumes from queue and broadcasts to all subscribers
+4. **Client Connections**: WebSocket clients subscribe to broadcast channel
+5. **Real-time Updates**: Price changes are immediately broadcast to all connected clients
+6. **REST Access**: HTTP clients can query current prices with rate limiting
 
 ## Dependencies
 
@@ -143,7 +232,9 @@ const MAX_CONNECTIONS = 100;      // Max concurrent WS connections
 
 ## Notes
 
-- The application handles disconnections from both Binance and clients gracefully
-- When max connections is reached, new clients are rejected with a close code
-- REST API requests are rate-limited to 100 per minute per IP
+- The application uses async/await patterns for all asynchronous operations
+- MessageQueue ensures proper message ordering and backpressure handling
+- BroadcastChannel provides efficient one-to-many communication
+- Automatic cleanup of disconnected WebSocket clients
+- Docker container includes health checks and proper security practices
 - For production use, consider adding reconnection logic for the Binance WebSocket and persistent storage
